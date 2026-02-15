@@ -1,0 +1,28 @@
+name: j3d_sq
+description: J3D SQ - Gestión de inventario y ventas de llaveros 3D
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.1.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: ^3.8.1
+  cloud_firestore: ^5.6.5
+  provider: ^6.1.2
+  fl_chart: ^0.70.2
+  image_picker: ^1.1.2
+  google_fonts: ^6.2.1
+  intl: ^0.19.0
+  uuid: ^4.5.1
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
