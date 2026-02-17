@@ -143,9 +143,7 @@ class ProductModel {
         'weightGrams': weightGrams,
         'imageUrl': imageUrl,
         'lowStockThreshold': lowStockThreshold,
-        'createdAt': createdAt != null
-            ? Timestamp.fromDate(createdAt!)
-            : FieldValue.serverTimestamp(),
+        'createdAt': Timestamp.fromDate(createdAt ?? DateTime.now()),
       };
 
   factory ProductModel.fromMap(String id, Map<String, dynamic> map) {
@@ -299,9 +297,7 @@ class StoreModel {
         'totalSold': totalSold,
         'balance': balance,
         'inventory': inventory.map((k, v) => MapEntry(k, v.toMap())),
-        'createdAt': createdAt != null
-            ? Timestamp.fromDate(createdAt!)
-            : FieldValue.serverTimestamp(),
+        'createdAt': Timestamp.fromDate(createdAt ?? DateTime.now()),
       };
 
   factory StoreModel.fromMap(String id, Map<String, dynamic> map) {
@@ -396,9 +392,7 @@ class ContactModel {
         'notes': notes,
         'type': type,
         'linkedStoreId': linkedStoreId,
-        'createdAt': createdAt != null
-            ? Timestamp.fromDate(createdAt!)
-            : FieldValue.serverTimestamp(),
+        'createdAt': Timestamp.fromDate(createdAt ?? DateTime.now()),
       };
 
   factory ContactModel.fromMap(String id, Map<String, dynamic> map) {

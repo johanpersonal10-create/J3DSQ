@@ -98,6 +98,28 @@ class StoreDetailScreen extends StatelessWidget {
 
                 const SizedBox(height: 24),
 
+                // Adjust inventory button
+                if (store.inventory.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () => _showAdjustInventoryDialog(
+                            context, store, state),
+                        icon: const Icon(Icons.tune_rounded, size: 20),
+                        label: const Text('Ajustar Inventario'),
+                        style: OutlinedButton.styleFrom(
+                          padding:
+                              const EdgeInsets.symmetric(vertical: 14),
+                          side: const BorderSide(
+                              color: AppColors.warning),
+                          foregroundColor: AppColors.warning,
+                        ),
+                      ),
+                    ),
+                  ),
+
                 // Cobro button
                 SizedBox(
                   width: double.infinity,
@@ -158,6 +180,22 @@ class StoreDetailScreen extends StatelessWidget {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) => _CobroSheet(store: store, productsMap: state.productsMap),
+    );
+  }
+
+  void _showAdjustInventoryDialog(
+      BuildContext context, StoreModel store, AppState state) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => _AdjustInventorySheet(
+        store: store,
+        productsMap: state.productsMap,
+      ),
     );
   }
 
@@ -1298,3 +1336,303 @@ class _SummaryRow extends StatelessWidget {
     );
   }
 }
+
+// ─── Adjust Inventory Sheet ────────────────────────────────────
+
+class _AdjustInventorySheet extends StatefulWidget {
+  final StoreModel store;
+  final Map<String, ProductModel> productsMap;
+  const _AdjustInventorySheet(
+      {required this.store, required this.productsMap});
+
+  @override
+  State<_AdjustInventorySheet> createState() => _AdjustInventorySheetState();
+}
+
+class _AdjustInventorySheetState extends State<_AdjustInventorySheet> {
+  late Map<String, TextEditingController> _controllers;
+
+  @override
+  void initState() {
+    super.initState();
+    _controllers = {};
+    for (final entry in widget.store.inventory.entries) {
+      _controllers[entry.key] =
+          TextEditingController(text: '${entry.value.stock}');
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  void _confirm() async {
+    final newStock = <String, int>{};
+    bool hasChanges = false;
+
+    for (final entry in _controllers.entries) {
+      final productId = entry.key;
+      final newVal = int.tryParse(entry.value.text) ?? 0;
+      final prevVal = widget.store.inventory[productId]?.stock ?? 0;
+      newStock[productId] = newVal;
+      if (newVal != prevVal) hasChanges = true;
+    }
+
+    if (!hasChanges) {
+      Navigator.pop(context);
+      showWarning(context, 'No se hicieron cambios');
+      return;
+    }
+
+    // Build summary of changes
+    final changes = <String>[];
+    for (final entry in newStock.entries) {
+      final prev = widget.store.inventory[entry.key]?.stock ?? 0;
+      if (entry.value != prev) {
+        final product = widget.productsMap[entry.key];
+        final name = product?.name ?? 'Producto';
+        final diff = entry.value - prev;
+        if (entry.value == 0) {
+          changes.add('$name: eliminado ($prev → 0)');
+        } else {
+          changes.add('$name: $prev → ${entry.value} (${diff > 0 ? '+' : ''}$diff)');
+        }
+      }
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirmar Ajuste'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Se aplicarán los siguientes cambios:',
+                style: TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 12),
+            ...changes.map((c) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.circle, size: 6,
+                          color: AppColors.warning),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(c,
+                            style: const TextStyle(fontSize: 14)),
+                      ),
+                    ],
+                  ),
+                )),
+            const SizedBox(height: 8),
+            const Text(
+              'Esta acción no registra una transacción.',
+              style: TextStyle(
+                  fontSize: 12, color: AppColors.textSecondary),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.warning),
+            child: const Text('Aplicar Ajuste'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      try {
+        await context.read<AppState>().adjustInventory(
+              store: widget.store,
+              newStock: newStock,
+            );
+        if (mounted) {
+          Navigator.pop(context);
+          showSuccess(context, 'Inventario ajustado correctamente');
+        }
+      } catch (e) {
+        if (mounted) {
+          showError(context, 'Error al ajustar inventario: $e');
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 24,
+          right: 24,
+          top: 24,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const ModalHeader(title: 'Ajustar Inventario'),
+              const SizedBox(height: 8),
+              const Text(
+                'Modifica las cantidades para devoluciones o correcciones. '
+                'Pon 0 para eliminar un producto del inventario.',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              ..._controllers.entries.map((entry) {
+                final productId = entry.key;
+                final product = widget.productsMap[productId];
+                final color = product != null
+                    ? Color(product.colorValue)
+                    : AppColors.textSecondary;
+                final label = product?.name ?? 'Producto';
+                final currentStock =
+                    widget.store.inventory[productId]?.stock ?? 0;
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.background,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: color.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: color,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              label,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.text,
+                              ),
+                            ),
+                            Text(
+                              'Stock actual: $currentStock',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Stepper controls
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _stepperBtn(Icons.remove, () {
+                            final val =
+                                int.tryParse(entry.value.text) ?? 0;
+                            if (val > 0) {
+                              setState(() =>
+                                  entry.value.text = '${val - 1}');
+                            }
+                          }),
+                          SizedBox(
+                            width: 50,
+                            child: TextField(
+                              controller: entry.value,
+                              keyboardType: TextInputType.number,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              decoration: const InputDecoration(
+                                filled: false,
+                                border: InputBorder.none,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ),
+                          ),
+                          _stepperBtn(Icons.add, () {
+                            final val =
+                                int.tryParse(entry.value.text) ?? 0;
+                            setState(
+                                () => entry.value.text = '${val + 1}');
+                          }),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              }),
+
+              const SizedBox(height: 20),
+
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _confirm,
+                  icon: const Icon(Icons.check_rounded),
+                  label: const Text('Aplicar Cambios',
+                      style: TextStyle(fontSize: 16)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.warning,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _stepperBtn(IconData icon, VoidCallback onPressed) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            border: Border.all(color: AppColors.border),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, size: 18, color: AppColors.text),
+        ),
+      ),
+    );
+  }
+}
+

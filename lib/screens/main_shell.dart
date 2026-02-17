@@ -5,6 +5,7 @@ import 'home_screen.dart';
 import 'stores_screen.dart';
 import 'products_screen.dart';
 import 'deliveries_screen.dart';
+import 'cobros_screen.dart';
 import 'finances_screen.dart';
 import 'contacts_screen.dart';
 
@@ -23,6 +24,7 @@ class _MainShellState extends State<MainShell> {
     StoresScreen(),
     ProductsScreen(),
     DeliveriesScreen(),
+    CobrosScreen(),
     FinancesScreen(),
   ];
 
@@ -45,6 +47,7 @@ class _MainShellState extends State<MainShell> {
         ),
         child: BottomNavigationBar(
           currentIndex: _currentIndex,
+          type: BottomNavigationBarType.fixed,
           onTap: (i) => setState(() => _currentIndex = i),
           items: const [
             BottomNavigationBarItem(
@@ -62,6 +65,10 @@ class _MainShellState extends State<MainShell> {
             BottomNavigationBarItem(
               icon: Icon(Icons.inventory_2_rounded),
               label: 'Entregas',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.point_of_sale_rounded),
+              label: 'Cobros',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.pie_chart_rounded),
@@ -159,11 +166,19 @@ class _MainShellState extends State<MainShell> {
                 },
               ),
               ListTile(
+                leading: const Icon(Icons.point_of_sale_rounded),
+                title: const Text('Cobros'),
+                onTap: () {
+                  Navigator.pop(context);
+                  setState(() => _currentIndex = 4);
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.pie_chart_rounded),
                 title: const Text('Finanzas'),
                 onTap: () {
                   Navigator.pop(context);
-                  setState(() => _currentIndex = 4);
+                  setState(() => _currentIndex = 5);
                 },
               ),
               const Spacer(),

@@ -15,9 +15,31 @@ class FinancesScreen extends StatefulWidget {
   State<FinancesScreen> createState() => _FinancesScreenState();
 }
 
-class _FinancesScreenState extends State<FinancesScreen> {
+class _FinancesScreenState extends State<FinancesScreen>
+    with SingleTickerProviderStateMixin {
   int _range = 3;
   bool _historyOpen = false;
+  late final AnimationController _refreshCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+  }
+
+  @override
+  void dispose() {
+    _refreshCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onRefresh() {
+    _refreshCtrl.forward(from: 0);
+    context.read<AppState>().refresh();
+  }
 
   List<TransactionModel> _filter(List<TransactionModel> all) {
     if (_range == 3) return all;
@@ -47,30 +69,41 @@ class _FinancesScreenState extends State<FinancesScreen> {
     for (final tx in txAll) {
       switch (tx.type) {
         case TransactionType.sale:
-          grossSales += tx.totalAmount;
-          final store =
-              state.stores.where((s) => s.id == tx.storeId).firstOrNull;
-          final rate = store?.commissionRate ?? 20;
-          commissions += tx.totalAmount * rate / 100;
+          // Reconstruct gross sale from items (tx.totalAmount is already net)
+          double txGross = 0;
           if (tx.items != null) {
             tx.items!.forEach((pid, qty) {
               unitsSold += qty;
               final p = pm[pid];
               if (p != null) {
-                prodCost += p.effectiveCost * qty;
-                prodRevenue[pid] = (prodRevenue[pid] ?? 0) + p.price * qty;
+                final itemRevenue = p.price * qty;
+                txGross += itemRevenue;
+                prodRevenue[pid] = (prodRevenue[pid] ?? 0) + itemRevenue;
                 prodUnits[pid] = (prodUnits[pid] ?? 0) + qty;
                 catRevenue[p.category.label] =
-                    (catRevenue[p.category.label] ?? 0) + p.price * qty;
+                    (catRevenue[p.category.label] ?? 0) + itemRevenue;
               }
             });
           }
+          // If we couldn't reconstruct from items, use stored amount as fallback
+          if (txGross == 0) txGross = tx.totalAmount;
+          final store =
+              state.stores.where((s) => s.id == tx.storeId).firstOrNull;
+          final rate = store?.commissionRate ?? 20;
+          grossSales += txGross;
+          commissions += txGross * rate / 100;
           storeRevenue[tx.storeId] =
               (storeRevenue[tx.storeId] ?? 0) + tx.totalAmount;
           break;
         case TransactionType.delivery:
           if (tx.items != null) {
-            tx.items!.forEach((_, qty) => unitsDelivered += qty);
+            tx.items!.forEach((pid, qty) {
+              unitsDelivered += qty;
+              final p = pm[pid];
+              if (p != null) {
+                prodCost += p.effectiveCost * qty;
+              }
+            });
           }
           break;
         case TransactionType.payment:
@@ -101,7 +134,21 @@ class _FinancesScreenState extends State<FinancesScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(title: const Text('Finanzas')),
+      appBar: AppBar(
+        title: const Text('Finanzas'),
+        actions: [
+          RotationTransition(
+            turns: Tween(begin: 0.0, end: 1.0).animate(
+              CurvedAnimation(parent: _refreshCtrl, curve: Curves.easeInOut),
+            ),
+            child: IconButton(
+              icon: const Icon(Icons.refresh_rounded),
+              tooltip: 'Actualizar',
+              onPressed: _onRefresh,
+            ),
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
         children: [

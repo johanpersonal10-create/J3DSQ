@@ -1,5 +1,6 @@
 // App state provider — ERP for J3D SQ
 
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/models.dart';
 import '../services/firestore_service.dart';
@@ -13,6 +14,11 @@ class AppState extends ChangeNotifier {
   List<ContactModel> _contacts = [];
   bool _isLoading = true;
   String _searchQuery = '';
+
+  StreamSubscription? _productsSub;
+  StreamSubscription? _storesSub;
+  StreamSubscription? _transactionsSub;
+  StreamSubscription? _contactsSub;
 
   List<StoreModel> get stores => _stores;
   List<TransactionModel> get transactions => _transactions;
@@ -30,14 +36,14 @@ class AppState extends ChangeNotifier {
   }
 
   void _init() {
-    _service.productsStream().listen((products) {
+    _productsSub = _service.productsStream().listen((products) {
       _products = products;
       notifyListeners();
     }, onError: (e) {
       debugPrint('Error loading products: $e');
     });
 
-    _service.storesStream().listen((stores) {
+    _storesSub = _service.storesStream().listen((stores) {
       _stores = stores;
       _isLoading = false;
       notifyListeners();
@@ -47,19 +53,39 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     });
 
-    _service.transactionsStream().listen((txs) {
+    _transactionsSub = _service.transactionsStream().listen((txs) {
       _transactions = txs;
       notifyListeners();
     }, onError: (e) {
       debugPrint('Error loading transactions: $e');
     });
 
-    _service.contactsStream().listen((contacts) {
+    _contactsSub = _service.contactsStream().listen((contacts) {
       _contacts = contacts;
       notifyListeners();
     }, onError: (e) {
       debugPrint('Error loading contacts: $e');
     });
+  }
+
+  /// Cancel all stream subscriptions and re-subscribe to get fresh data
+  Future<void> refresh() async {
+    _isLoading = true;
+    notifyListeners();
+    await _productsSub?.cancel();
+    await _storesSub?.cancel();
+    await _transactionsSub?.cancel();
+    await _contactsSub?.cancel();
+    _init();
+  }
+
+  @override
+  void dispose() {
+    _productsSub?.cancel();
+    _storesSub?.cancel();
+    _transactionsSub?.cancel();
+    _contactsSub?.cancel();
+    super.dispose();
   }
 
   // ─── Search ──────────────────────────────────────────────
@@ -281,6 +307,24 @@ class AppState extends ChangeNotifier {
       items: items,
       productsMap: productsMap,
     );
+  }
+
+  /// Adjust inventory for a store (returns, corrections, removals)
+  Future<void> adjustInventory({
+    required StoreModel store,
+    required Map<String, int> newStock,
+  }) async {
+    final updatedInv = Map<String, InventoryStats>.from(store.inventory);
+    for (final entry in newStock.entries) {
+      final prev = updatedInv[entry.key];
+      if (entry.value <= 0) {
+        updatedInv.remove(entry.key);
+      } else if (prev != null) {
+        updatedInv[entry.key] = prev.copyWith(stock: entry.value);
+      }
+    }
+    final updatedStore = store.copyWith(inventory: updatedInv);
+    await _service.setStore(updatedStore);
   }
 
   // ─── Sale / Cobro Operations ─────────────────────────────
