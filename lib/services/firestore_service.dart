@@ -16,6 +16,9 @@ class FirestoreService {
   CollectionReference<Map<String, dynamic>> get _productsCol =>
       _db.collection('productos');
 
+  CollectionReference<Map<String, dynamic>> get _contactsCol =>
+      _db.collection('contactos');
+
   // ─── Products ─────────────────────────────────────────────
 
   /// Real-time stream of all products
@@ -30,13 +33,23 @@ class FirestoreService {
     required double price,
     required double productionCost,
     required int colorValue,
+    String description = '',
+    ProductCategory category = ProductCategory.llavero,
+    CostBreakdown costBreakdown = const CostBreakdown(),
+    double weightGrams = 0,
+    int lowStockThreshold = 5,
   }) async {
     final product = ProductModel(
       id: '',
       name: name,
+      description: description,
       price: price,
       productionCost: productionCost,
       colorValue: colorValue,
+      category: category,
+      costBreakdown: costBreakdown,
+      weightGrams: weightGrams,
+      lowStockThreshold: lowStockThreshold,
     );
     final docRef = await _productsCol.add(product.toMap());
     return ProductModel.fromMap(docRef.id, product.toMap());
@@ -66,6 +79,9 @@ class FirestoreService {
     required String contactName,
     required String address,
     required double commissionRate,
+    String phone = '',
+    String email = '',
+    String notes = '',
   }) async {
     final store = StoreModel(
       id: '',
@@ -73,6 +89,9 @@ class FirestoreService {
       contactName: contactName,
       address: address,
       commissionRate: commissionRate,
+      phone: phone,
+      email: email,
+      notes: notes,
     );
     final docRef = await _storesCol.add(store.toMap());
     return StoreModel.fromMap(docRef.id, store.toMap());
@@ -312,5 +331,50 @@ class FirestoreService {
 
     batch.delete(_transactionsCol.doc(tx.id));
     await batch.commit();
+  }
+
+  // ─── Contacts ────────────────────────────────────────────
+
+  /// Real-time stream of all contacts
+  Stream<List<ContactModel>> contactsStream() {
+    return _contactsCol.orderBy('name').snapshots().map((snap) =>
+        snap.docs
+            .map((d) => ContactModel.fromMap(d.id, d.data()))
+            .toList());
+  }
+
+  /// Add a new contact
+  Future<ContactModel> addContact({
+    required String name,
+    String phone = '',
+    String email = '',
+    String address = '',
+    String notes = '',
+    String type = 'cliente',
+    String? linkedStoreId,
+  }) async {
+    final contact = ContactModel(
+      id: '',
+      name: name,
+      phone: phone,
+      email: email,
+      address: address,
+      notes: notes,
+      type: type,
+      linkedStoreId: linkedStoreId,
+    );
+    final docRef = await _contactsCol.add(contact.toMap());
+    return ContactModel.fromMap(docRef.id, contact.toMap());
+  }
+
+  /// Update an existing contact
+  Future<void> updateContact(
+      String id, Map<String, dynamic> updates) async {
+    await _contactsCol.doc(id).update(updates);
+  }
+
+  /// Delete a contact
+  Future<void> deleteContact(String id) async {
+    await _contactsCol.doc(id).delete();
   }
 }

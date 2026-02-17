@@ -1,187 +1,339 @@
-// Finances screen with dynamic products
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import '../helpers/alerts.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 
+final _cur = NumberFormat.currency(locale: 'es_MX', symbol: '\$');
+final _dt = DateFormat('dd/MM/yy HH:mm');
+
 class FinancesScreen extends StatefulWidget {
   const FinancesScreen({super.key});
-
   @override
   State<FinancesScreen> createState() => _FinancesScreenState();
 }
 
 class _FinancesScreenState extends State<FinancesScreen> {
-  String _range = 'Todos';
+  int _range = 3;
+  bool _historyOpen = false;
+
+  List<TransactionModel> _filter(List<TransactionModel> all) {
+    if (_range == 3) return all;
+    final now = DateTime.now();
+    final start = _range == 0
+        ? DateTime(now.year, now.month, now.day)
+        : _range == 1
+            ? now.subtract(const Duration(days: 7))
+            : DateTime(now.year, now.month);
+    return all.where((t) => t.date.isAfter(start)).toList();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<AppState>(
-      builder: (context, state, _) {
-        final txs = _filteredTransactions(state.transactions);
+    final state = context.watch<AppState>();
+    final txAll = _filter(state.transactions);
+    final pm = state.productsMap;
 
-        // Totals
-        double totalIncome = 0;
-        double totalExpenses = 0;
-        for (final tx in txs) {
-          if (tx.type == TransactionType.sale) {
-            totalIncome += tx.totalAmount;
-          } else if (tx.type == TransactionType.delivery) {
-            // Estimate production costs
-            tx.items?.forEach((productId, qty) {
-              final product = state.getProductById(productId);
-              if (product != null) {
-                totalExpenses += product.productionCost * qty;
+    double grossSales = 0, commissions = 0, prodCost = 0;
+    double collected = 0;
+    int unitsSold = 0, unitsDelivered = 0;
+    final prodRevenue = <String, double>{};
+    final prodUnits = <String, int>{};
+    final storeRevenue = <String, double>{};
+    final catRevenue = <String, double>{};
+
+    for (final tx in txAll) {
+      switch (tx.type) {
+        case TransactionType.sale:
+          grossSales += tx.totalAmount;
+          final store =
+              state.stores.where((s) => s.id == tx.storeId).firstOrNull;
+          final rate = store?.commissionRate ?? 20;
+          commissions += tx.totalAmount * rate / 100;
+          if (tx.items != null) {
+            tx.items!.forEach((pid, qty) {
+              unitsSold += qty;
+              final p = pm[pid];
+              if (p != null) {
+                prodCost += p.effectiveCost * qty;
+                prodRevenue[pid] = (prodRevenue[pid] ?? 0) + p.price * qty;
+                prodUnits[pid] = (prodUnits[pid] ?? 0) + qty;
+                catRevenue[p.category.label] =
+                    (catRevenue[p.category.label] ?? 0) + p.price * qty;
               }
             });
           }
-        }
-        final netProfit = totalIncome - totalExpenses;
+          storeRevenue[tx.storeId] =
+              (storeRevenue[tx.storeId] ?? 0) + tx.totalAmount;
+          break;
+        case TransactionType.delivery:
+          if (tx.items != null) {
+            tx.items!.forEach((_, qty) => unitsDelivered += qty);
+          }
+          break;
+        case TransactionType.payment:
+          collected += tx.totalAmount;
+          break;
+      }
+    }
 
-        return Scaffold(
-          appBar: AppBar(title: const Text('Finanzas')),
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Time range filter
-                _TimeRangeFilter(
-                  selected: _range,
-                  onChanged: (r) => setState(() => _range = r),
-                ),
-                const SizedBox(height: 20),
+    final netSales = grossSales - commissions;
+    final netProfit = netSales - prodCost;
+    final roi = prodCost > 0 ? (netProfit / prodCost) * 100 : 0.0;
+    final pending = state.totalReceivable;
+    final incomePerUnit = unitsSold > 0 ? netSales / unitsSold : 0.0;
 
-                // Summary Cards
-                Row(
-                  children: [
-                    Expanded(
-                      child: _SummaryCard(
-                        label: 'Ingresos',
-                        value: '\$${totalIncome.toStringAsFixed(0)}',
-                        icon: Icons.trending_up_rounded,
-                        color: AppColors.success,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _SummaryCard(
-                        label: 'Costos',
-                        value: '\$${totalExpenses.toStringAsFixed(0)}',
-                        icon: Icons.trending_down_rounded,
-                        color: AppColors.danger,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _SummaryCard(
-                  label: 'Ganancia Neta',
-                  value: '\$${netProfit.toStringAsFixed(0)}',
-                  icon: Icons.account_balance_wallet_rounded,
-                  color: netProfit >= 0 ? AppColors.success : AppColors.danger,
-                ),
-                const SizedBox(height: 24),
+    final topProducts = prodRevenue.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final maxProdRev =
+        topProducts.isNotEmpty ? topProducts.first.value : 1.0;
 
-                // Per-store performance
-                _StorePerformanceSection(
-                  stores: state.stores,
-                  transactions: txs,
-                  productsMap: state.productsMap,
-                ),
-                const SizedBox(height: 24),
+    final topStores = storeRevenue.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
 
-                // Transaction history
-                _CollapsibleHistory(
-                  transactions: txs,
-                  productsMap: state.productsMap,
-                ),
-              ],
+    final catEntries = catRevenue.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    final sortedTx = List<TransactionModel>.from(txAll)
+      ..sort((a, b) => b.date.compareTo(a.date));
+
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(title: const Text('Finanzas')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+        children: [
+          _timeFilterRow(),
+          const SizedBox(height: 12),
+          _profitHero(netProfit, roi),
+          const SizedBox(height: 16),
+          _kpiGrid(grossSales, commissions, netSales, prodCost, collected,
+              pending, unitsSold, unitsDelivered, incomePerUnit),
+          const SizedBox(height: 20),
+          _cashFlowCard(collected, pending),
+          const SizedBox(height: 20),
+          if (topProducts.isNotEmpty) ...[
+            _sectionTitle('Rentabilidad por Producto', Icons.insights_rounded),
+            const SizedBox(height: 8),
+            ...topProducts.take(10).map((e) {
+              final p = pm[e.key];
+              if (p == null) return const SizedBox.shrink();
+              final units = prodUnits[e.key] ?? 0;
+              return _productCard(p, e.value, units, maxProdRev);
+            }),
+            const SizedBox(height: 20),
+          ],
+          if (catEntries.isNotEmpty) ...[
+            _sectionTitle('Por Categoria', Icons.category_rounded),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: catEntries.map((e) {
+                return Chip(
+                  avatar: CircleAvatar(
+                    backgroundColor: AppColors.primary.withOpacity(0.15),
+                    child: Text(e.key[0],
+                        style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary)),
+                  ),
+                  label: Text('${e.key}: ${_cur.format(e.value)}'),
+                );
+              }).toList(),
             ),
-          ),
-        );
-      },
+            const SizedBox(height: 20),
+          ],
+          if (topStores.isNotEmpty) ...[
+            _sectionTitle('Ranking Tiendas', Icons.store_rounded),
+            const SizedBox(height: 8),
+            ...topStores.asMap().entries.map((entry) {
+              final idx = entry.key;
+              final e = entry.value;
+              final store =
+                  state.stores.where((s) => s.id == e.key).firstOrNull;
+              final name = store?.name ?? e.key;
+              final icon = idx == 0
+                  ? Icons.emoji_events_rounded
+                  : idx == 1
+                      ? Icons.military_tech_rounded
+                      : Icons.storefront_rounded;
+              final color = idx == 0
+                  ? const Color(0xFFFFD700)
+                  : idx == 1
+                      ? const Color(0xFFC0C0C0)
+                      : AppColors.textSecondary;
+              return _storeCard(name, e.value, icon, color);
+            }),
+            const SizedBox(height: 20),
+          ],
+          _costStructureCard(prodCost, commissions, unitsSold, roi),
+          const SizedBox(height: 20),
+          _historySection(sortedTx, pm, state),
+          const SizedBox(height: 40),
+        ],
+      ),
     );
   }
 
-  List<TransactionModel> _filteredTransactions(List<TransactionModel> all) {
-    final now = DateTime.now();
-    switch (_range) {
-      case 'Hoy':
-        return all.where((t) =>
-            t.date.year == now.year &&
-            t.date.month == now.month &&
-            t.date.day == now.day).toList();
-      case 'Semana':
-        final start = now.subtract(const Duration(days: 7));
-        return all.where((t) => t.date.isAfter(start)).toList();
-      case 'Mes':
-        final start = now.subtract(const Duration(days: 30));
-        return all.where((t) => t.date.isAfter(start)).toList();
-      default:
-        return all;
-    }
-  }
-}
-
-class _TimeRangeFilter extends StatelessWidget {
-  final String selected;
-  final ValueChanged<String> onChanged;
-  const _TimeRangeFilter({required this.selected, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _timeFilterRow() {
+    const labels = ['Hoy', 'Semana', 'Mes', 'Todos'];
     return Row(
-      children: ['Hoy', 'Semana', 'Mes', 'Todos'].map((r) {
-        final isSelected = selected == r;
+      children: List.generate(4, (i) {
+        final sel = _range == i;
         return Expanded(
           child: GestureDetector(
-            onTap: () => onChanged(r),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              margin: const EdgeInsets.symmetric(horizontal: 4),
-              padding: const EdgeInsets.symmetric(vertical: 10),
+            onTap: () => setState(() => _range = i),
+            child: Container(
+              margin: EdgeInsets.only(right: i < 3 ? 6 : 0),
+              padding: const EdgeInsets.symmetric(vertical: 8),
               decoration: BoxDecoration(
-                color: isSelected ? AppColors.primary : AppColors.surface,
+                color: sel ? AppColors.primary : AppColors.surface,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: isSelected ? AppColors.primary : AppColors.border,
-                ),
+                border: sel ? null : Border.all(color: AppColors.border),
               ),
               alignment: Alignment.center,
-              child: Text(
-                r,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: isSelected ? Colors.white : AppColors.textSecondary,
-                ),
-              ),
+              child: Text(labels[i],
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: sel ? Colors.white : AppColors.textSecondary)),
             ),
           ),
         );
-      }).toList(),
+      }),
     );
   }
-}
 
-class _SummaryCard extends StatelessWidget {
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
-  const _SummaryCard({
-    required this.label,
-    required this.value,
-    required this.icon,
-    required this.color,
-  });
+  Widget _profitHero(double net, double roi) {
+    final pos = net >= 0;
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: pos
+              ? [const Color(0xFF00B894), const Color(0xFF00CEC9)]
+              : [const Color(0xFFFF6B6B), const Color(0xFFFF8E8E)],
+        ),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Ganancia Neta',
+                  style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500)),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                        pos
+                            ? Icons.trending_up_rounded
+                            : Icons.trending_down_rounded,
+                        color: Colors.white,
+                        size: 14),
+                    const SizedBox(width: 4),
+                    Text('ROI ${roi.toStringAsFixed(0)}%',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(_cur.format(net),
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 32,
+                  fontWeight: FontWeight.w800)),
+        ],
+      ),
+    );
+  }
 
-  @override
-  Widget build(BuildContext context) {
+  Widget _kpiGrid(double gross, double comm, double netS, double cost,
+      double coll, double pend, int sold, int deliv, double ipu) {
+    Widget kpi(String label, String value, IconData ic, Color c) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(ic, size: 18, color: c),
+            const SizedBox(height: 6),
+            Text(value,
+                style: const TextStyle(
+                    fontSize: 15, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 2),
+            Text(label,
+                style: const TextStyle(
+                    fontSize: 10, color: AppColors.textSecondary)),
+          ],
+        ),
+      );
+    }
+
+    return Column(children: [
+      Row(children: [
+        Expanded(child: kpi('Venta Bruta', _cur.format(gross),
+            Icons.point_of_sale_rounded, AppColors.primary)),
+        const SizedBox(width: 8),
+        Expanded(child: kpi('Comisiones', _cur.format(comm),
+            Icons.percent_rounded, AppColors.warning)),
+        const SizedBox(width: 8),
+        Expanded(child: kpi('Neto Ventas', _cur.format(netS),
+            Icons.trending_up_rounded, AppColors.success)),
+      ]),
+      const SizedBox(height: 8),
+      Row(children: [
+        Expanded(child: kpi('Costo Prod', _cur.format(cost),
+            Icons.precision_manufacturing_rounded, AppColors.danger)),
+        const SizedBox(width: 8),
+        Expanded(child: kpi('Cobrado', _cur.format(coll),
+            Icons.payments_rounded, AppColors.success)),
+        const SizedBox(width: 8),
+        Expanded(child: kpi('Por Cobrar', _cur.format(pend),
+            Icons.schedule_rounded, AppColors.warning)),
+      ]),
+      const SizedBox(height: 8),
+      Row(children: [
+        Expanded(child: kpi('Uds Vendidas', '$sold',
+            Icons.shopping_bag_rounded, AppColors.primary)),
+        const SizedBox(width: 8),
+        Expanded(child: kpi('Uds Entregadas', '$deliv',
+            Icons.local_shipping_rounded, AppColors.textSecondary)),
+        const SizedBox(width: 8),
+        Expanded(child: kpi('Ing/Unidad', _cur.format(ipu),
+            Icons.analytics_rounded, AppColors.primary)),
+      ]),
+    ]);
+  }
+
+  Widget _cashFlowCard(double collected, double pending) {
+    final total = collected + pending;
+    final pct = total > 0 ? collected / total : 0.0;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -192,413 +344,346 @@ class _SummaryCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const Text('Flujo de Efectivo',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: pct,
+              minHeight: 10,
+              backgroundColor: AppColors.warning.withOpacity(0.3),
+              valueColor:
+                  const AlwaysStoppedAnimation<Color>(AppColors.success),
+            ),
+          ),
+          const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(label,
+              Text('Cobrado: ${_cur.format(collected)}',
                   style: const TextStyle(
-                      fontSize: 13, color: AppColors.textSecondary)),
-              Icon(icon, size: 20, color: color),
+                      fontSize: 12, color: AppColors.success)),
+              Text('Pendiente: ${_cur.format(pending)}',
+                  style: const TextStyle(
+                      fontSize: 12, color: AppColors.warning)),
             ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
-              color: color,
-            ),
           ),
         ],
       ),
     );
   }
-}
 
-// ─── Per-Store Performance ─────────────────────────────────
+  Widget _sectionTitle(String title, IconData icon) {
+    return Row(children: [
+      Icon(icon, size: 20, color: AppColors.primary),
+      const SizedBox(width: 8),
+      Text(title,
+          style:
+              const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    ]);
+  }
 
-class _StorePerformanceSection extends StatelessWidget {
-  final List<StoreModel> stores;
-  final List<TransactionModel> transactions;
-  final Map<String, ProductModel> productsMap;
-
-  const _StorePerformanceSection({
-    required this.stores,
-    required this.transactions,
-    required this.productsMap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (stores.isEmpty) return const SizedBox.shrink();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Rendimiento por Tienda',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
-            color: AppColors.text,
+  Widget _productCard(
+      ProductModel p, double revenue, int units, double maxRev) {
+    final barW = maxRev > 0 ? revenue / maxRev : 0.0;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Expanded(
+                child: Text(p.name,
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w600),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis)),
+            Text('${p.marginPercent.toStringAsFixed(0)}% margen',
+                style: const TextStyle(
+                    fontSize: 11, color: AppColors.textSecondary)),
+          ]),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: barW,
+              minHeight: 6,
+              backgroundColor: AppColors.border,
+              valueColor:
+                  AlwaysStoppedAnimation<Color>(Color(p.colorValue)),
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        ...stores.map((store) {
-          // Calculate income and expenses for this store
-          double storeIncome = 0;
-          double storeExpenses = 0;
-
-          for (final tx in transactions) {
-            if (tx.storeId != store.id) continue;
-            if (tx.type == TransactionType.sale) {
-              storeIncome += tx.totalAmount;
-            } else if (tx.type == TransactionType.delivery) {
-              tx.items?.forEach((productId, qty) {
-                final product = productsMap[productId];
-                if (product != null) {
-                  storeExpenses += product.productionCost * qty;
-                }
-              });
-            }
-          }
-
-          return Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.store_rounded,
-                      color: AppColors.primary, size: 20),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        store.name,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.text,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      Text(
-                        'Ingreso: \$${storeIncome.toStringAsFixed(0)}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.success,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      '\$${(storeIncome - storeExpenses).toStringAsFixed(0)}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.success,
-                      ),
-                    ),
-                    Text(
-                      'Costo: \$${storeExpenses.toStringAsFixed(0)}',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.danger,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          );
-        }),
-      ],
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('$units uds',
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textSecondary)),
+              Text(_cur.format(revenue),
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w700)),
+            ],
+          ),
+        ],
+      ),
     );
   }
-}
 
-// ─── Collapsible History ───────────────────────────────────
-
-class _CollapsibleHistory extends StatefulWidget {
-  final List<TransactionModel> transactions;
-  final Map<String, ProductModel> productsMap;
-  const _CollapsibleHistory({
-    required this.transactions,
-    required this.productsMap,
-  });
-
-  @override
-  State<_CollapsibleHistory> createState() => _CollapsibleHistoryState();
-}
-
-class _CollapsibleHistoryState extends State<_CollapsibleHistory> {
-  bool _isExpanded = false;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _storeCard(String name, double rev, IconData icon, Color color) {
     return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(children: [
+        Icon(icon, color: color, size: 22),
+        const SizedBox(width: 10),
+        Expanded(
+            child: Text(name,
+                style: const TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.w600))),
+        Text(_cur.format(rev),
+            style: const TextStyle(
+                fontSize: 14, fontWeight: FontWeight.w700)),
+      ]),
+    );
+  }
+
+  Widget _costStructureCard(
+      double prodCost, double commissions, int unitsSold, double roi) {
+    final total = prodCost + commissions;
+    final prodPct = total > 0 ? (prodCost / total * 100).round() : 0;
+    final commPct = total > 0 ? (commissions / total * 100).round() : 0;
+    final avgCost = unitsSold > 0 ? prodCost / unitsSold : 0.0;
+    return Container(
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.border),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
-            onTap: () => setState(() => _isExpanded = !_isExpanded),
-            borderRadius: BorderRadius.circular(16),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  const Icon(Icons.history_rounded,
-                      color: AppColors.primary, size: 22),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Text(
-                      'Historial Reciente',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.text,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    '${widget.transactions.length}',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  AnimatedRotation(
-                    turns: _isExpanded ? 0.5 : 0,
-                    duration: const Duration(milliseconds: 200),
-                    child: const Icon(Icons.expand_more_rounded,
-                        color: AppColors.textSecondary),
-                  ),
-                ],
+          Row(children: [
+            const Icon(Icons.precision_manufacturing_rounded,
+                size: 18, color: AppColors.textSecondary),
+            const SizedBox(width: 8),
+            const Expanded(
+                child: Text('Estructura de Costos',
+                    style: TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w700))),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: roi >= 0
+                    ? AppColors.success.withOpacity(0.15)
+                    : AppColors.danger.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(8),
               ),
+              child: Text('ROI ${roi.toStringAsFixed(0)}%',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: roi >= 0
+                          ? AppColors.success
+                          : AppColors.danger)),
             ),
+          ]),
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Row(children: [
+              Expanded(
+                  flex: prodPct.clamp(1, 100),
+                  child: Container(height: 10, color: AppColors.danger)),
+              Expanded(
+                  flex: commPct.clamp(1, 100),
+                  child: Container(height: 10, color: AppColors.warning)),
+            ]),
           ),
-          AnimatedCrossFade(
-            firstChild: const SizedBox.shrink(),
-            secondChild: Column(
-              children: [
-                const Divider(height: 1, color: AppColors.border),
-                if (widget.transactions.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text(
-                      'Sin transacciones en este período',
-                      style: TextStyle(color: AppColors.textSecondary),
-                    ),
-                  )
-                else
-                  ...widget.transactions.take(30).map((tx) =>
-                      _TransactionTile(tx: tx, productsMap: widget.productsMap)),
-              ],
-            ),
-            crossFadeState: _isExpanded
-                ? CrossFadeState.showSecond
-                : CrossFadeState.showFirst,
-            duration: const Duration(milliseconds: 250),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(children: [
+                Container(width: 10, height: 10, color: AppColors.danger),
+                const SizedBox(width: 4),
+                Text('Produccion $prodPct%',
+                    style: const TextStyle(
+                        fontSize: 11, color: AppColors.textSecondary)),
+              ]),
+              Row(children: [
+                Container(
+                    width: 10, height: 10, color: AppColors.warning),
+                const SizedBox(width: 4),
+                Text('Comisiones $commPct%',
+                    style: const TextStyle(
+                        fontSize: 11, color: AppColors.textSecondary)),
+              ]),
+            ],
           ),
+          const SizedBox(height: 10),
+          Text('Costo promedio/unidad: ${_cur.format(avgCost)}',
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.textSecondary)),
         ],
       ),
     );
   }
-}
 
-class _TransactionTile extends StatelessWidget {
-  final TransactionModel tx;
-  final Map<String, ProductModel> productsMap;
-  const _TransactionTile({required this.tx, required this.productsMap});
+  Widget _historySection(List<TransactionModel> txs,
+      Map<String, ProductModel> pm, AppState state) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(children: [
+        InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => setState(() => _historyOpen = !_historyOpen),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(children: [
+              const Icon(Icons.history_rounded,
+                  size: 20, color: AppColors.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(
+                      'Historial de Transacciones (${txs.length})',
+                      style: const TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w700))),
+              Icon(
+                  _historyOpen
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                  color: AppColors.textSecondary),
+            ]),
+          ),
+        ),
+        if (_historyOpen) ...[
+          const Divider(height: 1, color: AppColors.border),
+          if (txs.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Text('Sin transacciones',
+                  style: TextStyle(color: AppColors.textSecondary)),
+            )
+          else
+            ...txs.take(50).map((tx) => _txTile(tx, pm, state)),
+        ],
+      ]),
+    );
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    final dateStr = DateFormat('dd/MM · HH:mm', 'es').format(tx.date);
-    final isPayment = tx.type == TransactionType.payment;
-    final isDelivery = tx.type == TransactionType.delivery;
-
+  Widget _txTile(TransactionModel tx, Map<String, ProductModel> pm,
+      AppState state) {
     IconData icon;
     Color color;
-    String prefix;
-
-    if (isPayment) {
-      icon = Icons.payments_rounded;
-      color = AppColors.primary;
-      prefix = '+';
-    } else if (isDelivery) {
-      icon = Icons.inventory_2_rounded;
-      color = AppColors.textSecondary;
-      prefix = '';
-    } else {
-      icon = Icons.point_of_sale_rounded;
-      color = AppColors.success;
-      prefix = '+';
-    }
-
-    return GestureDetector(
-      onLongPress: () => _showDeleteOption(context),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: const BoxDecoration(
-          border:
-              Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, size: 18, color: color),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    tx.storeName,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.text,
-                    ),
-                  ),
-                  if (tx.note != null && tx.note!.isNotEmpty)
-                    Text(
-                      tx.note!,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                ],
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '$prefix\$${tx.totalAmount.toStringAsFixed(0)}',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: isDelivery ? AppColors.textSecondary : color,
-                  ),
-                ),
-                Text(
-                  dateStr,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showDeleteOption(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading:
-                  const Icon(Icons.delete_rounded, color: AppColors.danger),
-              title: const Text('Eliminar Transacción',
-                  style: TextStyle(color: AppColors.danger)),
-              onTap: () {
-                Navigator.pop(ctx);
-                _confirmDelete(context);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _confirmDelete(BuildContext context) {
-    String message;
     switch (tx.type) {
+      case TransactionType.payment:
+        icon = Icons.payments_rounded;
+        color = AppColors.primary;
+        break;
       case TransactionType.delivery:
-        message = 'Se revertirá el stock entregado a "${tx.storeName}".';
+        icon = Icons.inventory_2_rounded;
+        color = AppColors.textSecondary;
         break;
       case TransactionType.sale:
-        message =
-            'Se revertirán las ventas y el saldo pendiente de "${tx.storeName}".';
-        break;
-      case TransactionType.payment:
-        message =
-            'Se revertirá el pago al saldo pendiente de "${tx.storeName}".';
+        icon = Icons.point_of_sale_rounded;
+        color = AppColors.success;
         break;
     }
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Eliminar Transacción'),
-        content: Text('$message ¿Continuar?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar'),
+    String detail = '';
+    if (tx.items != null && tx.items!.isNotEmpty) {
+      detail = tx.items!.entries.map((e) {
+        final name = pm[e.key]?.name ?? e.key;
+        return '${e.value}x $name';
+      }).join(', ');
+    } else if (tx.note != null && tx.note!.isNotEmpty) {
+      detail = tx.note!;
+    }
+
+    return InkWell(
+      onLongPress: () async {
+        final confirm = await showConfirmDelete(
+          context,
+          title: 'Eliminar transaccion',
+          message:
+              'Se revertira esta transaccion de ${tx.storeName}. Continuar?',
+        );
+        if (confirm && mounted) {
+          try {
+            await state.deleteTransaction(tx);
+            if (mounted) showSuccess(context, 'Transaccion eliminada');
+          } catch (e) {
+            if (mounted) showError(context, 'Error: $e');
+          }
+        }
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 18, color: color),
           ),
-          TextButton(
-            onPressed: () {
-              context.read<AppState>().deleteTransaction(tx);
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Transacción eliminada'),
-                  backgroundColor: AppColors.success,
-                ),
-              );
-            },
-            style: TextButton.styleFrom(foregroundColor: AppColors.danger),
-            child: const Text('Eliminar'),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(tx.storeName,
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+                if (detail.isNotEmpty)
+                  Text(detail,
+                      style: const TextStyle(
+                          fontSize: 11, color: AppColors.textSecondary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+              ],
+            ),
           ),
-        ],
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                  '${tx.type == TransactionType.payment ? "-" : ""}${_cur.format(tx.totalAmount)}',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: tx.type == TransactionType.payment
+                          ? AppColors.primary
+                          : AppColors.textSecondary)),
+              Text(_dt.format(tx.date),
+                  style: const TextStyle(
+                      fontSize: 10, color: AppColors.textSecondary)),
+            ],
+          ),
+        ]),
       ),
     );
   }

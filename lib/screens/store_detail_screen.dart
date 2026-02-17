@@ -3,6 +3,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../helpers/alerts.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
@@ -170,85 +172,90 @@ class StoreDetailScreen extends StatelessWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          left: 24,
-          right: 24,
-          top: 24,
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.border,
-                  borderRadius: BorderRadius.circular(2),
+      builder: (ctx) => GestureDetector(
+        onTap: () => FocusScope.of(ctx).unfocus(),
+        behavior: HitTestBehavior.opaque,
+        child: Padding(
+          padding: EdgeInsets.only(
+            left: 24,
+            right: 24,
+            top: 24,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const ModalHeader(title: 'Registrar Pago'),
+              const SizedBox(height: 8),
+              Text(
+                'Saldo pendiente: \$${store.balance.toStringAsFixed(2)}',
+                style: const TextStyle(color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 24),
+              const Text('Monto (\$)',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: amountCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(hintText: '0.00'),
+                autofocus: true,
+              ),
+              const SizedBox(height: 16),
+              const Text('Nota (opcional)',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: noteCtrl,
+                decoration: const InputDecoration(
+                    hintText: 'Ej. Pago parcial efectivo'),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    final amount = double.tryParse(amountCtrl.text);
+                    if (amount == null || amount <= 0) {
+                      showWarning(ctx, 'Ingresa un monto válido mayor a \$0');
+                      return;
+                    }
+                    try {
+                      await context.read<AppState>().addPayment(
+                            store: store,
+                            amount: amount,
+                            note: noteCtrl.text.trim().isNotEmpty
+                                ? noteCtrl.text.trim()
+                                : null,
+                          );
+                      if (ctx.mounted) {
+                        FocusScope.of(ctx).unfocus();
+                        Navigator.pop(ctx);
+                      }
+                      if (context.mounted) {
+                        showSuccess(context,
+                            'Pago de \$${amount.toStringAsFixed(2)} registrado');
+                      }
+                    } catch (e) {
+                      if (ctx.mounted) {
+                        showError(ctx, 'Error al registrar pago: $e');
+                      }
+                    }
+                  },
+                  icon: const Icon(Icons.payments_rounded),
+                  label: const Text('Guardar Pago'),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 20),
-            const Text('Registrar Pago',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            Text(
-              'Saldo pendiente: \$${store.balance.toStringAsFixed(2)}',
-              style: const TextStyle(color: AppColors.textSecondary),
-            ),
-            const SizedBox(height: 24),
-            const Text('Monto (\$)',
-                style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textSecondary)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: amountCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(hintText: '0.00'),
-              autofocus: true,
-            ),
-            const SizedBox(height: 16),
-            const Text('Nota (opcional)',
-                style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textSecondary)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: noteCtrl,
-              decoration:
-                  const InputDecoration(hintText: 'Ej. Pago parcial efectivo'),
-            ),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  final amount = double.tryParse(amountCtrl.text);
-                  if (amount == null || amount <= 0) return;
-                  context.read<AppState>().addPayment(
-                        store: store,
-                        amount: amount,
-                        note: noteCtrl.text.trim().isNotEmpty
-                            ? noteCtrl.text.trim()
-                            : null,
-                      );
-                  Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                          'Pago de \$${amount.toStringAsFixed(2)} registrado'),
-                      backgroundColor: AppColors.success,
-                    ),
-                  );
-                },
-                child: const Text('Guardar Pago'),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -346,7 +353,134 @@ class _StoreInfoCard extends StatelessWidget {
               ),
             ],
           ),
+          // Contact actions
+          if (store.phone.isNotEmpty || store.email.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Divider(color: AppColors.border, height: 1),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                if (store.phone.isNotEmpty) ...[
+                  Expanded(
+                    child: _ContactActionBtn(
+                      icon: Icons.phone_rounded,
+                      label: 'Llamar',
+                      color: AppColors.success,
+                      onTap: () async {
+                        final uri = Uri.parse('tel:${store.phone}');
+                        if (await canLaunchUrl(uri)) {
+                          await launchUrl(uri);
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _ContactActionBtn(
+                      icon: Icons.chat_rounded,
+                      label: 'WhatsApp',
+                      color: const Color(0xFF25D366),
+                      onTap: () async {
+                        final phone = store.phone.replaceAll(RegExp(r'[^\d]'), '');
+                        final uri = Uri.parse('https://wa.me/$phone');
+                        if (await canLaunchUrl(uri)) {
+                          await launchUrl(uri, mode: LaunchMode.externalApplication);
+                        }
+                      },
+                    ),
+                  ),
+                ],
+                if (store.email.isNotEmpty) ...[
+                  if (store.phone.isNotEmpty) const SizedBox(width: 8),
+                  Expanded(
+                    child: _ContactActionBtn(
+                      icon: Icons.email_rounded,
+                      label: 'Email',
+                      color: AppColors.primary,
+                      onTap: () async {
+                        final uri = Uri.parse('mailto:${store.email}');
+                        if (await canLaunchUrl(uri)) {
+                          await launchUrl(uri);
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+          // Notes
+          if (store.notes.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.note_rounded,
+                      size: 16, color: AppColors.textSecondary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      store.notes,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+class _ContactActionBtn extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+  const _ContactActionBtn(
+      {required this.icon,
+      required this.label,
+      required this.color,
+      required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -726,41 +860,37 @@ class _StoreTxTile extends StatelessWidget {
     );
   }
 
-  void _confirmDelete(BuildContext context) {
+  void _confirmDelete(BuildContext context) async {
     String message;
     switch (tx.type) {
       case TransactionType.delivery:
-        message = 'Se revertirá el stock entregado.';
+        message = 'Se revertirá el stock entregado. ¿Continuar?';
         break;
       case TransactionType.sale:
-        message = 'Se revertirán las ventas y el saldo pendiente.';
+        message = 'Se revertirán las ventas y el saldo pendiente. ¿Continuar?';
         break;
       case TransactionType.payment:
-        message = 'Se revertirá el pago al saldo pendiente.';
+        message = 'Se revertirá el pago al saldo pendiente. ¿Continuar?';
         break;
     }
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Eliminar Transacción'),
-        content: Text('$message ¿Continuar?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar'),
-          ),
-          TextButton(
-            onPressed: () {
-              context.read<AppState>().deleteTransaction(tx);
-              Navigator.pop(ctx);
-            },
-            style: TextButton.styleFrom(foregroundColor: AppColors.danger),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
+    final confirmed = await showConfirmDelete(
+      context,
+      title: 'Eliminar Transacción',
+      message: message,
     );
+    if (confirmed && context.mounted) {
+      try {
+        await context.read<AppState>().deleteTransaction(tx);
+        if (context.mounted) {
+          showSuccess(context, 'Transacción eliminada correctamente');
+        }
+      } catch (e) {
+        if (context.mounted) {
+          showError(context, 'Error al eliminar: $e');
+        }
+      }
+    }
   }
 }
 
@@ -820,23 +950,13 @@ class _CobroSheetState extends State<_CobroSheet> {
 
       if (current > prevStock) {
         hasError = true;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content:
-                Text('La existencia no puede ser mayor al stock registrado'),
-            backgroundColor: AppColors.danger,
-          ),
-        );
+        showWarning(context,
+            'La existencia no puede ser mayor al stock registrado');
         return;
       }
       if (current < 0) {
         hasError = true;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('La existencia no puede ser negativa'),
-            backgroundColor: AppColors.danger,
-          ),
-        );
+        showWarning(context, 'La existencia no puede ser negativa');
         return;
       }
 
@@ -864,20 +984,22 @@ class _CobroSheetState extends State<_CobroSheet> {
       currentStock[entry.key] = int.tryParse(entry.value.text) ?? 0;
     }
 
-    await context.read<AppState>().registerSale(
-          store: widget.store,
-          currentStock: currentStock,
-        );
+    try {
+      await context.read<AppState>().registerSale(
+            store: widget.store,
+            currentStock: currentStock,
+          );
 
-    if (mounted) {
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content:
-              Text('Cobro registrado: \$${_toReceive.toStringAsFixed(2)}'),
-          backgroundColor: AppColors.success,
-        ),
-      );
+      if (mounted) {
+        FocusScope.of(context).unfocus();
+        Navigator.pop(context);
+        showSuccess(context,
+            'Cobro de \$${_toReceive.toStringAsFixed(2)} registrado');
+      }
+    } catch (e) {
+      if (mounted) {
+        showError(context, 'Error al registrar cobro: $e');
+      }
     }
   }
 
@@ -886,45 +1008,32 @@ class _CobroSheetState extends State<_CobroSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 24,
-        right: 24,
-        top: 24,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Handle bar
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.border,
-                  borderRadius: BorderRadius.circular(2),
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 24,
+          right: 24,
+          top: 24,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const ModalHeader(title: 'Registrar Cobro'),
+              const SizedBox(height: 8),
+              const Text(
+                '¿Cuántas piezas QUEDAN en existencia?',
+                style: TextStyle(
+                  fontSize: 15,
+                  color: AppColors.textSecondary,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
-            ),
-            const SizedBox(height: 20),
-
-            const Text(
-              'Registrar Cobro',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              '¿Cuántas piezas QUEDAN en existencia?',
-              style: TextStyle(
-                fontSize: 15,
-                color: AppColors.textSecondary,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(height: 24),
+              const SizedBox(height: 24),
 
             // Input per product with stock
             ..._controllers.entries.map((entry) {
@@ -1068,6 +1177,7 @@ class _CobroSheetState extends State<_CobroSheet> {
             const SizedBox(height: 12),
           ],
         ),
+      ),
       ),
     );
   }

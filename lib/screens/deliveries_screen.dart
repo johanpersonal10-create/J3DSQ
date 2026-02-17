@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import '../helpers/alerts.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
@@ -223,35 +224,25 @@ class _DeliveryCard extends StatelessWidget {
     );
   }
 
-  void _confirmDelete(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Eliminar Entrega'),
-        content: const Text(
-            'Se revertirá el stock entregado a la tienda. ¿Continuar?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar'),
-          ),
-          TextButton(
-            onPressed: () {
-              context.read<AppState>().deleteTransaction(delivery);
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Entrega eliminada'),
-                  backgroundColor: AppColors.success,
-                ),
-              );
-            },
-            style: TextButton.styleFrom(foregroundColor: AppColors.danger),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
+  void _confirmDelete(BuildContext context) async {
+    final confirmed = await showConfirmDelete(
+      context,
+      title: 'Eliminar Entrega',
+      message:
+          'Se revertirá el stock entregado a la tienda. ¿Continuar?',
     );
+    if (confirmed && context.mounted) {
+      try {
+        await context.read<AppState>().deleteTransaction(delivery);
+        if (context.mounted) {
+          showSuccess(context, 'Entrega eliminada correctamente');
+        }
+      } catch (e) {
+        if (context.mounted) {
+          showError(context, 'Error al eliminar: $e');
+        }
+      }
+    }
   }
 }
 
@@ -318,35 +309,23 @@ class _DeliveryFormSheetState extends State<_DeliveryFormSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 24,
-        right: 24,
-        top: 24,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.border,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            const Text(
-              'Nueva Entrega',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 24),
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 24,
+          right: 24,
+          top: 24,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const ModalHeader(title: 'Nueva Entrega'),
+              const SizedBox(height: 24),
 
             // Store selector
             const Text('Tienda',
@@ -405,16 +384,21 @@ class _DeliveryFormSheetState extends State<_DeliveryFormSheet> {
 
             SizedBox(
               width: double.infinity,
-              child: ElevatedButton(
+              child: ElevatedButton.icon(
                 onPressed: _totalQty > 0 && _selectedStore != null
                     ? _handleSave
                     : null,
-                child: const Text('Registrar Entrega'),
+                icon: const Icon(Icons.local_shipping_rounded),
+                label: const Text('Registrar Entrega'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
               ),
             ),
             const SizedBox(height: 12),
           ],
         ),
+      ),
       ),
     );
   }
@@ -426,22 +410,27 @@ class _DeliveryFormSheetState extends State<_DeliveryFormSheet> {
       if (qty > 0) items[productId] = qty;
     });
 
-    if (items.isEmpty || _selectedStore == null) return;
+    if (items.isEmpty || _selectedStore == null) {
+      showWarning(context, 'Selecciona al menos 1 pieza para entregar');
+      return;
+    }
 
-    await context.read<AppState>().addDelivery(
-          store: _selectedStore!,
-          items: items,
-        );
+    try {
+      await context.read<AppState>().addDelivery(
+            store: _selectedStore!,
+            items: items,
+          );
 
-    if (mounted) {
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-              'Entrega de $_totalQty pzas a ${_selectedStore!.name} registrada'),
-          backgroundColor: AppColors.success,
-        ),
-      );
+      if (mounted) {
+        FocusScope.of(context).unfocus();
+        Navigator.pop(context);
+        showSuccess(context,
+            'Entrega de $_totalQty pzas a ${_selectedStore!.name} registrada');
+      }
+    } catch (e) {
+      if (mounted) {
+        showError(context, 'Error al registrar entrega: $e');
+      }
     }
   }
 }

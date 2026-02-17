@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../helpers/alerts.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
@@ -128,12 +129,50 @@ class _StoreCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${store.contactName} · Comisión ${store.commissionRate.toStringAsFixed(1)}%',
+                    '${store.contactName} · ${store.commissionRate.toStringAsFixed(0)}%',
                     style: const TextStyle(
                       fontSize: 13,
                       color: AppColors.textSecondary,
                     ),
                   ),
+                  if (store.phone.isNotEmpty || store.email.isNotEmpty)
+                    Row(
+                      children: [
+                        if (store.phone.isNotEmpty) ...[
+                          const Icon(Icons.phone_rounded,
+                              size: 12, color: AppColors.textSecondary),
+                          const SizedBox(width: 3),
+                          Text(
+                            store.phone,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                        if (store.phone.isNotEmpty && store.email.isNotEmpty)
+                          const Text(' · ',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: AppColors.textSecondary)),
+                        if (store.email.isNotEmpty) ...[
+                          const Icon(Icons.email_rounded,
+                              size: 12, color: AppColors.textSecondary),
+                          const SizedBox(width: 3),
+                          Flexible(
+                            child: Text(
+                              store.email,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textSecondary,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                 ],
               ),
             ),
@@ -232,29 +271,25 @@ class _StoreCard extends StatelessWidget {
     );
   }
 
-  void _confirmDelete(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Eliminar Tienda'),
-        content: Text(
-            '¿Estás seguro de eliminar "${store.name}"? Se borrará todo su inventario y transacciones.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar'),
-          ),
-          TextButton(
-            onPressed: () {
-              context.read<AppState>().deleteStore(store.id);
-              Navigator.pop(ctx);
-            },
-            style: TextButton.styleFrom(foregroundColor: AppColors.danger),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
+  void _confirmDelete(BuildContext context) async {
+    final confirmed = await showConfirmDelete(
+      context,
+      title: 'Eliminar Tienda',
+      message:
+          '¿Estás seguro de eliminar "${store.name}"? Se borrará todo su inventario y transacciones.',
     );
+    if (confirmed && context.mounted) {
+      try {
+        await context.read<AppState>().deleteStore(store.id);
+        if (context.mounted) {
+          showSuccess(context, '"${store.name}" eliminada correctamente');
+        }
+      } catch (e) {
+        if (context.mounted) {
+          showError(context, 'Error al eliminar: $e');
+        }
+      }
+    }
   }
 }
 
@@ -305,6 +340,10 @@ class _StoreFormSheetState extends State<_StoreFormSheet> {
   late final TextEditingController _contactCtrl;
   late final TextEditingController _addressCtrl;
   late final TextEditingController _commissionCtrl;
+  late final TextEditingController _phoneCtrl;
+  late final TextEditingController _emailCtrl;
+  late final TextEditingController _notesCtrl;
+  bool _isSaving = false;
 
   bool get isEditing => widget.store != null;
 
@@ -323,6 +362,9 @@ class _StoreFormSheetState extends State<_StoreFormSheet> {
                     ? 0
                     : 1)
             : '20');
+    _phoneCtrl = TextEditingController(text: widget.store?.phone ?? '');
+    _emailCtrl = TextEditingController(text: widget.store?.email ?? '');
+    _notesCtrl = TextEditingController(text: widget.store?.notes ?? '');
   }
 
   @override
@@ -331,44 +373,32 @@ class _StoreFormSheetState extends State<_StoreFormSheet> {
     _contactCtrl.dispose();
     _addressCtrl.dispose();
     _commissionCtrl.dispose();
+    _phoneCtrl.dispose();
+    _emailCtrl.dispose();
+    _notesCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 24,
-        right: 24,
-        top: 24,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Handle bar
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.border,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            Text(
-              isEditing ? 'Editar Tienda' : 'Nueva Tienda',
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 24),
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 24,
+          right: 24,
+          top: 24,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ModalHeader(
+                  title: isEditing ? 'Editar Tienda' : 'Nueva Tienda'),
+              const SizedBox(height: 24),
 
             const Text('Nombre',
                 style: TextStyle(
@@ -393,6 +423,53 @@ class _StoreFormSheetState extends State<_StoreFormSheet> {
             ),
             const SizedBox(height: 16),
 
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Teléfono',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textSecondary)),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _phoneCtrl,
+                        keyboardType: TextInputType.phone,
+                        decoration: const InputDecoration(
+                          hintText: 'Ej. 5551234567',
+                          prefixIcon: Icon(Icons.phone_rounded, size: 18),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Email',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textSecondary)),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _emailCtrl,
+                        keyboardType: TextInputType.emailAddress,
+                        decoration: const InputDecoration(
+                          hintText: 'correo@...',
+                          prefixIcon: Icon(Icons.email_rounded, size: 18),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
             const Text('Dirección',
                 style: TextStyle(
                     fontWeight: FontWeight.w600,
@@ -403,7 +480,7 @@ class _StoreFormSheetState extends State<_StoreFormSheet> {
               decoration:
                   const InputDecoration(hintText: 'Ej. Av. Siempre Viva 123'),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
 
             const Text('Comisión de Tienda (%)',
                 style: TextStyle(
@@ -424,18 +501,31 @@ class _StoreFormSheetState extends State<_StoreFormSheet> {
                 ),
               ),
             ),
+            const SizedBox(height: 16),
+
+            const Text('Notas (opcional)',
+                style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _notesCtrl,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                  hintText: 'Ej. Abren solo fines de semana'),
+            ),
             const SizedBox(height: 28),
 
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _handleSave,
-                child: Text(isEditing ? 'Guardar Cambios' : 'Crear Tienda'),
-              ),
+            LoadingButton(
+              isLoading: _isSaving,
+              onPressed: _handleSave,
+              label: isEditing ? 'Guardar Cambios' : 'Crear Tienda',
+              icon: isEditing ? Icons.save_rounded : Icons.store_rounded,
             ),
             const SizedBox(height: 12),
           ],
         ),
+      ),
       ),
     );
   }
@@ -445,39 +535,62 @@ class _StoreFormSheetState extends State<_StoreFormSheet> {
     final contact = _contactCtrl.text.trim();
     final address = _addressCtrl.text.trim();
     final commission = double.tryParse(_commissionCtrl.text.trim());
+    final phone = _phoneCtrl.text.trim();
+    final email = _emailCtrl.text.trim();
+    final notes = _notesCtrl.text.trim();
 
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('El nombre es obligatorio')),
-      );
+      showWarning(context, 'El nombre de la tienda es obligatorio');
       return;
     }
 
     if (commission == null || commission < 0 || commission > 100) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('La comisión debe ser un número entre 0 y 100')),
-      );
+      showWarning(context, 'La comisión debe ser un número entre 0 y 100');
       return;
     }
 
-    final state = context.read<AppState>();
-    if (isEditing) {
-      await state.updateStore(
-        widget.store!.id,
-        name: name,
-        contactName: contact,
-        address: address,
-        commissionRate: commission,
-      );
-    } else {
-      await state.addStore(
-        name: name,
-        contactName: contact,
-        address: address,
-        commissionRate: commission,
-      );
+    setState(() => _isSaving = true);
+
+    try {
+      final state = context.read<AppState>();
+      if (isEditing) {
+        await state.updateStore(
+          widget.store!.id,
+          name: name,
+          contactName: contact,
+          address: address,
+          commissionRate: commission,
+          phone: phone,
+          email: email,
+          notes: notes,
+        );
+      } else {
+        await state.addStore(
+          name: name,
+          contactName: contact,
+          address: address,
+          commissionRate: commission,
+          phone: phone,
+          email: email,
+          notes: notes,
+        );
+      }
+
+      if (mounted) {
+        FocusScope.of(context).unfocus();
+        Navigator.pop(context);
+        showSuccess(
+          context,
+          isEditing
+              ? '"$name" actualizada correctamente'
+              : '"$name" creada correctamente',
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSaving = false);
+        showError(context, 'Error al guardar: $e');
+      }
     }
-    if (mounted) Navigator.pop(context);
   }
 }
