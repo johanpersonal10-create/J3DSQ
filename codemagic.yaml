@@ -10,6 +10,8 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
+    integrations:
+      app_store_connect: J3DSQ TestFlight
     scripts:
       - name: Install dependencies
         script: |
