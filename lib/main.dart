@@ -10,15 +10,50 @@ import 'theme/app_theme.dart';
 import 'firebase_options.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Firebase
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    // Initialize Firebase
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  // Initialize locale data for date formatting
-  await initializeDateFormatting('es');
+    // Initialize locale data for date formatting
+    await initializeDateFormatting('es');
 
-  runApp(const J3DApp());
+    runApp(const J3DApp());
+  } catch (e, stack) {
+    runApp(MaterialApp(
+      home: Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.red, size: 48),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Error de Inicio Fatal:',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.red),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(e.toString(), style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Stack Trace:',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(stack.toString(), style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ));
+  }
 }
 
 class J3DApp extends StatelessWidget {
